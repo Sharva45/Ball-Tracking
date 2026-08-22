@@ -1,84 +1,84 @@
 import cv2
 import numpy as np
+from ultralytics import YOLO
 from kalmanfilter import KalmanFilter
+
+# Initialize YOLO model (yolov8n.pt will auto-download on first run)
+model = YOLO("yolov8n.pt")
 
 # Initialize Kalman Filter
 kf = KalmanFilter()
 
-# Open live webcam feed (0 for default camera)
+# Open camera stream (0 for default webcam)
 cap = cv2.VideoCapture(0)
 
-# Define HSV threshold ranges for a Red Cricket Ball
-# Note: Red wraps around in HSV color space (0-10 & 170-180)
-lower_red1 = np.array([0, 120, 70])
-upper_red1 = np.array([10, 255, 255])
-lower_red2 = np.array([170, 120, 70])
-upper_red2 = np.array([180, 255, 255])
-
-# List to store historical tracking points for drawing trajectory lines
 trajectory_points = []
+
+# Class ID for 'sports ball' in COCO dataset
+SPORTS_BALL_CLASS_ID = 32
 
 while True:
     ret, frame = cap.read()
     if not ret:
         break
 
-    # Convert frame to HSV color space
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    # Run YOLO detection on the frame (stream=True for faster live streaming)
+    results = model(frame, stream=True, verbose=False)
 
-    # Filter out red ball color mask
-    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-    mask = mask1 | mask2
+    best_ball = None
+    max_conf = 0.0
 
-    # Smooth the mask to reduce noise
-    mask = cv2.erode(mask, None, iterations=2)
-    mask = cv2.dilate(mask, None, iterations=2)
+    for r in results:
+        boxes = r.boxes
+        for box in boxes:
+            cls_id = int(box.cls[0])
+            conf = float(box.conf[0])
 
-    # Find contours of the detected ball
-    contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            # Filter only for 'sports ball' class with confidence > 0.3
+            if cls_id == SPORTS_BALL_CLASS_ID and conf > 0.3:
+                if conf > max_conf:
+                    max_conf = conf
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    best_ball = (x1, y1, x2, y2)
 
-    center_x, center_y = None, None
+    # If YOLO detected a ball in this frame
+    if best_ball is not None:
+        x1, y1, x2, y2 = best_ball
+        
+        # Calculate bounding box center point (center_x, center_y)
+        center_x = int((x1 + x2) / 2)
+        center_y = int((y1 + y2) / 2)
 
-    if len(contours) > 0:
-        # Find the largest contour assuming it's the cricket ball
-        c = max(contours, key=cv2.contourArea)
-        ((x, y), radius) = cv2.minEnclosingCircle(c)
+        # Draw YOLO Detection (Red Bounding Box and Center)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
+        cv2.putText(frame, f"Ball {max_conf:.2f}", (x1, y1 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
-        if radius > 8:  # Minimum size threshold
-            center_x, center_y = int(x), int(y)
-            
-            # Draw real detection (Red Circle) [00:27:41]
-            cv2.circle(frame, (center_x, center_y), int(radius), (0, 0, 255), 2)
-            cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
+        # Predict next location using Kalman Filter
+        predicted_x, predicted_y = kf.predict(center_x, center_y)
 
-            # Predict next location using Kalman Filter [00:28:23]
-            predicted_x, predicted_y = kf.predict(center_x, center_y)
+        # Draw Kalman Predicted Position (Blue Circle)
+        cv2.circle(frame, (predicted_x, predicted_y), 15, (255, 0, 0), 2)
+        cv2.putText(frame, "Predicted", (predicted_x + 10, predicted_y - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
 
-            # Draw predicted position (Blue Circle) [00:28:46]
-            cv2.circle(frame, (predicted_x, predicted_y), int(radius), (255, 0, 0), 2)
-            cv2.putText(frame, "Predicted", (predicted_x + 10, predicted_y - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+        # Save trajectory history
+        trajectory_points.append((center_x, center_y))
 
-            # Track trajectory
-            trajectory_points.append((center_x, center_y))
-
-    # Draw line trail of actual movement trajectory
+    # Draw past trajectory path (Green line trail)
     for i in range(1, len(trajectory_points)):
         if trajectory_points[i - 1] is None or trajectory_points[i] is None:
             continue
         cv2.line(frame, trajectory_points[i - 1], trajectory_points[i], (0, 255, 0), 2)
 
-    # Limit trail length to avoid cluttering screen
+    # Maintain maximum length of trajectory line
     if len(trajectory_points) > 30:
         trajectory_points.pop(0)
 
-    # Display video stream
-    cv2.imshow("Cricket Ball Tracker & Trajectory Predictor", frame)
+    cv2.imshow("Cricket Ball Tracking (YOLO + Kalman Filter)", frame)
 
-    # Press 'ESC' key to exit
-    key = cv2.waitKey(1)
-    if key == 27:
+    if cv2.waitKey(1) == 27:  # Press ESC to quit
         break
 
 cap.release()
