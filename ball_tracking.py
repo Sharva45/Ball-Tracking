@@ -1,40 +1,109 @@
 import cv2
 import numpy as np
 
-# Red wraps around 0/180 in HSV, so two ranges are needed
-lower_red1 = np.array([0, 120, 70])
-upper_red1 = np.array([10, 255, 255])
-lower_red2 = np.array([170, 120, 70])
-upper_red2 = np.array([180, 255, 255])
+# Load image
+img = cv2.imread("ball.png")
 
-cap = cv2.VideoCapture(0)
+if img is None:
+    print("Error: Could not load ball.png")
+    exit()
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+# Convert BGR to HSV
+hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+# Tennis ball HSV range
+lower_ball = np.array([25, 30, 120])
+upper_ball = np.array([65, 255, 255])
 
-    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-    mask = cv2.bitwise_or(mask1, mask2)
+# Create mask
+mask = cv2.inRange(hsv, lower_ball, upper_ball)
 
-    mask = cv2.erode(mask, None, iterations=2)
-    mask = cv2.dilate(mask, None, iterations=2)
+# Remove noise
+kernel = np.ones((3, 3), np.uint8)
 
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if contours:
-        c = max(contours, key=cv2.contourArea)
-        ((x, y), radius) = cv2.minEnclosingCircle(c)
-        if radius > 8:
-            cv2.circle(frame, (int(x), int(y)), int(radius), (0, 255, 0), 2)
-            cv2.circle(frame, (int(x), int(y)), 3, (0, 0, 255), -1)
+mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
-    cv2.imshow("Cricket Ball Tracking", frame)
-    cv2.imshow("Mask", mask)  # keep this open while tuning
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+# Find contours
+contours, _ = cv2.findContours(
+    mask,
+    cv2.RETR_EXTERNAL,
+    cv2.CHAIN_APPROX_SIMPLE
+)
 
-cap.release()
+best_contour = None
+best_area = 0
+
+# Find the largest suitable object
+for contour in contours:
+
+    area = cv2.contourArea(contour)
+
+    if area < 5:
+        continue
+
+    perimeter = cv2.arcLength(contour, True)
+
+    if perimeter == 0:
+        continue
+
+    circularity = (4 * np.pi * area) / (perimeter ** 2)
+
+    # Tennis ball should be roughly circular
+    if circularity > 0.4 and area > best_area:
+        best_area = area
+        best_contour = contour
+
+
+# If ball found
+if best_contour is not None:
+
+    # Minimum enclosing circle
+    (x, y), radius = cv2.minEnclosingCircle(best_contour)
+
+    center = (int(x), int(y))
+    radius = int(radius)
+
+    print("Tennis ball detected!")
+    print("Center:", center)
+    print("Radius:", radius)
+
+    # Draw circle around ball
+    cv2.circle(
+        img,
+        center,
+        radius,
+        (0, 255, 0),
+        2
+    )
+
+    # Draw center
+    cv2.circle(
+        img,
+        center,
+        3,
+        (0, 0, 255),
+        -1
+    )
+
+    # Display coordinates
+    cv2.putText(
+        img,
+        f"Ball: {center}",
+        (center[0] + 10, center[1]),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (0, 255, 0),
+        2
+    )
+
+else:
+    print("Tennis ball not detected")
+
+
+# Show results
+cv2.imshow("Tennis Ball Detection", img)
+cv2.imshow("Mask", mask)
+
+cv2.waitKey(0)
 cv2.destroyAllWindows()
