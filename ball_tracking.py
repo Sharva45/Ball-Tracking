@@ -1,84 +1,91 @@
 import cv2
 import numpy as np
 
-# Load image
-img = cv2.imread("ball.png")
+# ---------------------------------------
+# Load images
+# ---------------------------------------
 
-if img is None:
-    print("Error: Could not load ball.png")
+image = cv2.imread("ball.png")
+template = cv2.imread("ball_zoomed.png")
+
+if image is None:
+    print("Could not load ball.png")
     exit()
 
-# Convert to HSV
-hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-
-# Tennis ball color range
-lower_ball = np.array([30, 80, 150])
-upper_ball = np.array([50, 255, 255])
-
-# Create mask
-mask = cv2.inRange(hsv, lower_ball, upper_ball)
-
-# Remove noise
-kernel = np.ones((3, 3), np.uint8)
-
-mask = cv2.morphologyEx(
-    mask,
-    cv2.MORPH_OPEN,
-    kernel
-)
-
-mask = cv2.morphologyEx(
-    mask,
-    cv2.MORPH_CLOSE,
-    kernel
-)
-
-# Find contours
-contours, _ = cv2.findContours(
-    mask,
-    cv2.RETR_EXTERNAL,
-    cv2.CHAIN_APPROX_SIMPLE
-)
-
-best_contour = None
-best_area = 0
-
-for contour in contours:
-
-    area = cv2.contourArea(contour)
-
-    if area < 5:
-        continue
-
-    perimeter = cv2.arcLength(contour, True)
-
-    if perimeter == 0:
-        continue
-
-    circularity = (4 * np.pi * area) / (perimeter ** 2)
-
-    if circularity > 0.4 and area > best_area:
-        best_area = area
-        best_contour = contour
+if template is None:
+    print("Could not load ball_zoomed.png")
+    exit()
 
 
 # ---------------------------------------
-# Ball detected
+# COURT ORIGIN
+# ---------------------------------------
+# Approximate bottom-left corner of court
+origin_x = 0
+origin_y = 466
+
+# Draw origin point
+cv2.circle(
+    image,
+    (origin_x, origin_y),
+    7,
+    (0, 0, 255),
+    -1
+)
+
+# Draw origin label
+cv2.putText(
+    image,
+    "ORIGIN (0,0)",
+    (origin_x + 10, origin_y - 10),
+    cv2.FONT_HERSHEY_SIMPLEX,
+    0.7,
+    (0, 0, 255),
+    2
+)
+
+
+# ---------------------------------------
+# Template matching
 # ---------------------------------------
 
-if best_contour is not None:
+gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+gray_template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
 
-    # Bounding rectangle
-    x, y, w, h = cv2.boundingRect(best_contour)
+result = cv2.matchTemplate(
+    gray_image,
+    gray_template,
+    cv2.TM_CCOEFF_NORMED
+)
 
-    # Make it SQUARE
-    size = max(w, h)
+min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
 
-    # Center of detected object
+print("Match confidence:", max_val)
+
+
+# ---------------------------------------
+# Detect ball
+# ---------------------------------------
+
+threshold = 0.70
+
+if max_val >= threshold:
+
+    x = max_loc[0]
+    y = max_loc[1]
+
+    h, w = gray_template.shape
+
+    # Ball center
     center_x = x + w // 2
     center_y = y + h // 2
 
-    # Make square centered on ball
+    # -----------------------------------
+    # Square around ball
+    # -----------------------------------
+
+    size = max(w, h) + 10
+
     x1 = center_x - size // 2
     y1 = center_y - size // 2
 
@@ -87,45 +94,49 @@ if best_contour is not None:
 
     # Draw square
     cv2.rectangle(
-        img,
+        image,
         (x1, y1),
         (x2, y2),
         (0, 255, 0),
         2
     )
 
-    # Draw center point
+    # Draw ball center
     cv2.circle(
-        img,
+        image,
         (center_x, center_y),
-        3,
-        (0, 0, 255),
+        4,
+        (255, 0, 0),
         -1
     )
 
-    # Display coordinates
+    # -----------------------------------
+    # Image coordinates
+    # -----------------------------------
+
     cv2.putText(
-        img,
-        f"Ball: ({center_x}, {center_y})",
+        image,
+        f"Ball pixel: ({center_x}, {center_y})",
         (x1, y1 - 10),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
+        0.55,
         (0, 255, 0),
         2
     )
 
-    print("Tennis ball detected")
-    print(f"Center: ({center_x}, {center_y})")
-    print(f"Bounding box: ({x1}, {y1}) -> ({x2}, {y2})")
+    print("BALL FOUND")
+    print(f"Pixel position = ({center_x}, {center_y})")
 
 else:
 
-    print("Tennis ball not detected")
+    print("Ball NOT found")
 
 
-# Show result
-cv2.imshow("Tennis Ball Detection", img)
-cv2.imshow("Mask", mask)
+# ---------------------------------------
+# Display
+# ---------------------------------------
+
+cv2.imshow("Tennis Ball Detection", image)
 
 cv2.waitKey(0)
 cv2.destroyAllWindows()
